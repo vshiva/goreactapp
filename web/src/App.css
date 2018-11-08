@@ -5,10 +5,11 @@
 .App-logo {
   animation: App-logo-spin infinite 20s linear;
   height: 40vmin;
+  background-color: yellowgreen;
 }
 
 .App-header {
-  background-color: #282c34;
+  background-color: #e90fa0;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
