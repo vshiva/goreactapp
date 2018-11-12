@@ -1,0 +1,120 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: goreact-app-
+spec:
+  # entrypoint is the name of the template used as the starting point of the workflow
+  entrypoint: goreact-app
+  # the 'goreact-app' template accepts an parameter 'revision', with a default of 'master'.
+  # this can be overridden via argo CLI (e.g. `argo submit ci.yaml -p revision=0dea2d0`)
+  volumes:
+  - name: docker-reg-cred
+    secret:
+      secretName: regcred
+  arguments:
+    parameters:
+    - name: revision
+      value: master
+  # a temporary volume, named workdir, will be used as a working directory
+  # for this workflow. This volume is passed around from step to step.
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+  templates:
+  - name: goreact-app
+    inputs:
+      parameters:
+      - name: revision
+    steps:
+    - - name: setup
+        template: clone-and-setup-dependencies
+        arguments:
+          parameters:
+          - name: revision
+            value: "{{inputs.parameters.revision}}"
+    - - name: build
+        template: build-golang
+    - - name: test
+        template: test-build
+        arguments:
+          parameters:
+          - name: os-image
+            value: "{{item.image}}:{{item.tag}}"
+        withItems:
+        - { image: 'debian', tag: '9.1' }
+        - { image: 'alpine', tag: '3.8' }
+        - { image: 'ubuntu', tag: '17.10' }
+    - - name: build-push-image
+        template: build-and-push-docker-image
+  
+  - name: clone-and-setup-dependencies
+    inputs:
+      parameters:
+      - name: revision
+      artifacts:
+      - name: code
+        path: /go/src/github.com/vshiva/goreactapp
+        git:
+          repo: https://github.com/vshiva/goreactapp.git
+          revision: "{{inputs.parameters.revision}}"
+    container:
+      image: reactgo/builder-ci:latest
+      command: [sh, -c]
+      args: ["
+        cd /go/src/github.com/vshiva/goreactapp/web && 
+        yarn install && 
+        yarn build &&
+        go get -u github.com/golang/dep/cmd/dep && 
+        dep ensure && 
+        go get -u github.com/go-bindata/go-bindata/... && 
+        go generate .
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /go
+        
+  - name: build-golang
+    container:
+      image: reactgo/builder-ci:latest
+      command: [sh, -c]
+      args: ["
+        cd /go/src/github.com/vshiva/goreactapp &&
+        CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/goreactapp ./cmd
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /go
+
+  - name: test-build
+    inputs:
+      parameters:
+      - name: os-image
+    container:
+      image: "{{inputs.parameters.os-image}}"
+      command: [sh, -c]
+      args: ["
+        uname -a ;
+        cat /etc/os-release ;
+        /go/src/github.com/vshiva/goreactapp/bin/goreactapp;
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /go
+
+  - name: build-and-push-docker-image
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+      command: ["/kaniko/executor"]
+      args: ["-c", "/go/src/github.com/vshiva/goreactapp", "-f", "build/Dockerfile-ci", "-d", "vshiva/goreactapp:fromk8s"]
+      volumeMounts:
+      - name: workdir
+        mountPath: /go
+      - name: docker-reg-cred
+        mountPath: /kaniko/.docker
+        readOnly: true
