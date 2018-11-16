@@ -15,6 +15,8 @@ spec:
     parameters:
     - name: revision
       value: master
+    - name: imageTag
+      value: latest
   # a temporary volume, named workdir, will be used as a working directory
   # for this workflow. This volume is passed around from step to step.
   volumeClaimTemplates:
@@ -31,6 +33,7 @@ spec:
     inputs:
       parameters:
       - name: revision
+      - name: imageTag
     steps:
     - - name: setup
         template: clone-and-setup-dependencies
@@ -52,7 +55,11 @@ spec:
         - { image: 'ubuntu', tag: '17.10' }
     - - name: build-push-image
         template: build-and-push-docker-image
-  
+        arguments:
+          parameters:
+          - name: imageTag
+            value: "{{inputs.parameters.imageTag}}"
+
   - name: clone-and-setup-dependencies
     inputs:
       parameters:
@@ -108,10 +115,13 @@ spec:
         mountPath: /go
 
   - name: build-and-push-docker-image
+    inputs:
+      parameters:
+      - name: imageTag
     container:
       image: gcr.io/kaniko-project/executor:debug
       command: ["/kaniko/executor"]
-      args: ["-c", "/go/src/github.com/vshiva/goreactapp", "-f", "build/Dockerfile-ci", "-d", "vshiva/goreactapp:fromk8s"]
+      args: ["-c", "/go/src/github.com/vshiva/goreactapp", "-f", "build/Dockerfile-ci", "-d", "reactgo/goreactapp:{{inputs.parameters.imageTag}}"]
       volumeMounts:
       - name: workdir
         mountPath: /go

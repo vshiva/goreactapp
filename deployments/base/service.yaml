@@ -6,10 +6,9 @@ metadata:
   name: goreactapp
 spec:
   ports:
-  - port: 8443
+  - port: 8888
     protocol: TCP
     targetPort: 4443
   selector:
     app: goreactapp
-  sessionAffinity: None
-  type: LoadBalancer
+  type: ClusterIP

@@ -1,0 +1,203 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: goreact-app-
+spec:
+  # entrypoint is the name of the template used as the starting point of the workflow
+  entrypoint: goreact-app-cd
+  # the 'goreact-app' template accepts an parameter 'env', with a default of 'staging'.
+  # this can be overridden via argo CLI (e.g. `argo submit cd.yaml -p env=staging`)
+  arguments:
+    parameters:
+    - name: env
+      value: staging
+    - name: ingressName
+      value: ingress
+    - name: revision
+      value: master 
+  # a temporary volume, named workdir, will be used as a working directory
+  # for this workflow. This volume is passed around from step to step.
+  volumeClaimTemplates:
+  - metadata:
+      name: workdir
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
+  templates:
+  - name: goreact-app-cd
+    inputs:
+      parameters:
+      - name: revision
+      - name: env
+      - name: ingressName
+    steps:
+    - - name: init
+        template: init
+        arguments:
+          parameters:
+          - name: revision
+            value: "{{inputs.parameters.revision}}"
+          - name: env
+            value: "{{inputs.parameters.env}}"
+    - - name: perform-db-upgrade
+        template: db-upgrade
+        arguments:
+          parameters:
+          - name: param1
+            value: someValue
+          - name: param2
+            value: someValue
+    - - name: get-deployment-info
+        template: current-deployment
+        arguments:
+          parameters:
+          - name: env
+            value: "{{inputs.parameters.env}}"
+          - name: ingressName
+            value: "{{inputs.parameters.ingressName}}"
+    - - name: do-green-deployment
+        when: "{{steps.get-deployment-info.outputs.parameters.current}} == blue"
+        template: blue-green-deployment
+        arguments:
+          parameters:
+          - name: env
+            value: "{{inputs.parameters.env}}"
+          - name: color
+            value: "green"
+    - - name: do-blue-deployment
+        when: "{{steps.get-deployment-info.outputs.parameters.current}} == green"
+        template: blue-green-deployment
+        arguments:
+          parameters:
+          - name: env
+            value: "{{inputs.parameters.env}}"
+          - name: color
+            value: "blue"
+    - - name: run-test
+        template: test
+        arguments:
+          parameters:
+          - name: os-image
+            value: "{{item.image}}:{{item.tag}}"
+        withItems:
+        - { image: 'debian', tag: '9.1' }
+        - { image: 'alpine', tag: '3.8' }
+        - { image: 'ubuntu', tag: '17.10' }
+    - - name: do-post-db-cleanup
+        template: post-db-cleanup
+        arguments:
+          parameters:
+          - name: param1
+            value: someValue
+          - name: param2
+            value: someValue
+    - - name: switch-live-traffic
+        template: update-ingress
+        arguments:
+          parameters:
+          - name: current
+            value: "{{steps.get-deployment-info.outputs.parameters.current}}"
+
+  - name: init
+    inputs:
+      parameters:
+      - name: revision
+      - name: env
+      artifacts:
+      - name: code
+        path: /work/src/github.com/vshiva/goreactapp
+        git:
+          repo: https://github.com/vshiva/goreactapp.git
+          revision: "{{inputs.parameters.revision}}"
+    container:
+      image: reactgo/builder-ci:latest
+      volumeMounts:
+      - name: workdir
+        mountPath: /work
+        
+  - name: current-deployment
+    inputs:
+      parameters:
+      - name: env
+      - name: ingressName
+    container:
+      image: reactgo/builder-ci:latest
+      command: [sh, -c]
+      args: ["
+        kubectl -n {{inputs.parameters.env}} get ing {{inputs.parameters.ingressName}} -o json > /tmp/ing.json && jq -r '.metadata.labels.\"live.app\"' /tmp/ing.json > /tmp/live.app
+      "]
+    outputs:
+      parameters:
+      - name: current
+        valueFrom:
+          path: /tmp/live.app
+
+  - name: db-upgrade
+    inputs:
+      parameters:
+      - name: param1
+      - name: param2
+    container:
+      image: alpine:3.8
+      command: [sh, -c]
+      args: ["
+        echo 'perform database upgrade here'
+      "]
+
+  - name: blue-green-deployment
+    inputs:
+      parameters:
+      - name: env
+      - name: color
+    container:
+      image: reactgo/builder-ci:latest
+      command: [sh, -c]
+      args: ["
+        cd /work/src/github.com/vshiva/goreactapp;
+        kustomize build deployments/overlays/{{inputs.parameters.env}}/{{inputs.parameters.color}}/ | kubectl -n {{inputs.parameters.env}} apply -f -;
+        kubectl -n {{inputs.parameters.env}} rollout status --watch=true 'deployments/{{inputs.parameters.color}}-goreactapp';
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /work
+  
+  - name: test
+    inputs:
+      parameters:
+      - name: os-image
+    container:
+      image: "{{inputs.parameters.os-image}}"
+      command: [sh, -c]
+      args: ["
+        uname -a ;
+        cat /etc/os-release ;
+      "]
+
+  - name: post-db-cleanup
+    inputs:
+      parameters:
+      - name: param1
+      - name: param2
+    container:
+      image: alpine:3.8
+      command: [sh, -c]
+      args: ["
+        echo 'perform post deployment database operation here'
+      "]
+
+  - name: update-ingress
+    inputs:
+      parameters:
+      - name: current
+    script:
+      image: reactgo/builder-ci:latest
+      command: [sh, -x]
+      source: |
+        if [[ "{{inputs.parameters.current}}" == "green" ]]; then 
+          kubectl -n staging patch ingress ingress --type json -p='[{"op": "replace", "path": "/spec/rules/0/http/paths/0/backend/serviceName", "value": "blue-goreactapp"},{"op":"replace","path":"/metadata/labels/live.app", "value": "blue"}]'
+        else 
+          kubectl -n staging patch ingress ingress --type json -p='[{"op": "replace", "path": "/spec/rules/0/http/paths/0/backend/serviceName", "value": "green-goreactapp"},{"op":"replace","path":"/metadata/labels/live.app", "value": "green"}]'
+        fi;

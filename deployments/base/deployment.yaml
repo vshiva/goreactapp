@@ -18,5 +18,8 @@ spec:
       - name: goreactapp
         ports:
         - containerPort: 4443
-        image: reactgo/goreactapp:0.1.12
-        args: ['server', '--mode', 'cyan']
+        image: reactgo/goreactapp
+        args: ['server']
+        envFrom:
+          - configMapRef:
+              name: env-config

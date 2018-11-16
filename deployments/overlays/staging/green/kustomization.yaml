@@ -1,0 +1,10 @@
+bases:
+  - ../
+namePrefix: green-
+configMapGenerator:
+  - name: env-config
+    behavior: merge
+    literals:
+      - MODE=green
+commonLabels:
+  app.type: green

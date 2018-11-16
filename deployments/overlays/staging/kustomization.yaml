@@ -1,0 +1,11 @@
+bases:
+  - ../../base
+patchesStrategicMerge:
+  - deployment.yaml
+  - configmap.yaml
+configMapGenerator:
+  - name: env-config
+    behavior: merge
+imageTags:
+- name: reactgo/goreactapp
+  newTag: 0.1.15

@@ -1,0 +1,10 @@
+bases:
+  - ../
+namePrefix: blue-
+configMapGenerator:
+  - name: env-config
+    behavior: merge
+    literals:
+      - MODE=blue
+commonLabels:
+  app.type: blue
