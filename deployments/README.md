@@ -1,56 +1,55 @@
-# GoReactApp - Go and React JS micro service that serves static content and also hosts REST Apis
+# Blue Green Deployment of this App
 
-## Application Stack
+## Pre-Reqs
 
-    - Go 1.12
-    - ReactJS
-    - Kaniko for Container Builder
-    - Argo WF for CI & CD
+- K8S Cluster with RBAC enabled
+- [Ingress Controller](https://github.com/heptio/contour)
+- [Argo Workflow Controller](https://argoproj.github.io/argo)
+- GoLang 1.10+
+- [Kustomize](https://github.com/kubernetes-sigs/kustomize)
 
-## Building this App
+### Install Kustomize
 
-    - argo submit ci.ayml
+```bash
+brew install kustomize
+```
 
-## Deploying this App
+### Install Ingress Controller and Ingress Resource
 
-### Assumptions
+```bash
+kubectl apply -f https://j.hept.io/contour-deployment-rbac
+```
 
-- Initial Version of the application is deployed outside of this.
-- Service is fixed.
-- Deployment has a TAG to indicate it is blue or green.
-- Parameters
-    -- Overlay
+If you are running k8s cluster with docker for mac make the service type as NodePort
 
-### Deployment Steps
+```bash
+kubectl -n heptio-contour patch svc contour --type json -p='[{"op":"replace","path":"/spec/type", "value": "NodePort"}]'
+```
 
-#### Step 1
+### Install Argo WF Controller
 
-Query the current version from the service tag and find out if we need to do blue or green deployment
+```bash
+kubectl create ns argo
+kubectl apply -n argo -f https://raw.githubusercontent.com/argoproj/argo/v2.2.1/manifests/install.yaml
+```
 
-#### Step 2
+### Install the GoReactAPP
 
-Do data migration or any presteps
+#### Bootstrap
 
-#### Step 3
+- Create a Namespace for Staging
 
-Use the overlay and generate the artifact with prefix that is green or blue
+```bash
+kubectl create ns staging
+```
 
-#### Step 4
+- Create a Ingress Resource
 
-Apply the artifacts that was generated earlier. At this step we will have a newer version of the app deployed
+```bash
+kubectl -n staging apply -f deployments/ingress.yaml
+```
 
-#### Step 5
+- Deploy the first version
 
-Run the Test against the new service end point
-
-#### Step 6
-
-    Update the public service LB with new end points ( Simply another K8S Service )
-
-#### Step 7
-
-Scale down the old deployment to 0
-
-#### Step 8
-
-Handle Any Post deployment activies here
+```
+kustomize build deployments/overlays/staging/

@@ -2,6 +2,8 @@ apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
   name: ingress
+  labels:
+    live.app: green
 spec:
   rules:
   - http:
